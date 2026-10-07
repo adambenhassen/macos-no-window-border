@@ -59,6 +59,7 @@ sleep 1.5
 max=$(awk '$1=="max" {print $2}' $out/host.txt)
 float=$(awk '$1=="floating" {print $2}' $out/host.txt)
 
+export NOBORDER_GRACE_S=0  # the test app was just launched
 ./noborder.py --pids $host > $out/daemon.log 2>&1 & daemon=$!
 check "maximized applied" $max "[noshadow] [max]" "square=1 rim=0"
 before=$(tagcount $out/daemon.log $max)
@@ -75,7 +76,7 @@ check "floating untouched" $float "[shadow] [nomax]" "square=0 rim=1"
 kill -USR1 $host
 check "un-maximized restored" $max "[shadow] [nomax]" "square=0 rim=1"
 kill -USR2 $host
-check "re-maximized applied (warm, within 3 s)" $max "[noshadow] [max]" "square=1 rim=0" 3
+check "re-maximized applied (warm, within 5 s)" $max "[noshadow] [max]" "square=1 rim=0" 5
 
 kill -TERM $daemon
 for _ in {1..60}; do kill -0 $daemon 2>/dev/null || break; sleep 0.5; done

@@ -5,11 +5,12 @@ unit tested. noborder.py feeds it each `winscan --watch` line and executes the A
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
-SETTLE_S = 0.5          # a window's maximized state must hold this long before acting
+APPLY_SETTLE_S = 2.0    # a window must stay maximized this long before it is changed
+RESTORE_SETTLE_S = 0.5  # and stay un-maximized this long before it is restored
 RETRY_BASE_S = 2.0      # back off windows whose app keeps restoring its shadow
 RETRY_MAX_S = 120.0
 BUSY_BASE_S = 1.0       # back off windows whose app was busy (main thread not idle)
-BUSY_MAX_S = 30.0
+BUSY_CHECKS = 3         # busy results before giving up until the window changes
 MAX_RECORDS = 4096      # applied records kept for windows not currently on screen
 
 
@@ -54,15 +55,19 @@ def latest_line(buffer: bytes) -> Tuple[Optional[str], bytes]:
 class Tracker:
     """Remembers which windows noborder changed, so it only ever restores its own changes."""
 
-    def __init__(self, settle_s=SETTLE_S):
-        self.settle_s = settle_s
+    def __init__(self, apply_settle_s=APPLY_SETTLE_S, restore_settle_s=RESTORE_SETTLE_S):
+        self.apply_settle_s = apply_settle_s
+        self.restore_settle_s = restore_settle_s
         self.applied = {}      # wid -> pid
         self.had_shadow = {}   # wid -> untag on restore: shadow was on when applied, or we tagged
         self.pending = {}      # wid -> (target maximized state, first seen at)
         self.retry = {}        # wid -> (next tag allowed at, current delay)
-        self.held = {}         # wid -> (act again at, current delay) after the app was busy
+        self.held = {}         # wid -> (act again at, busy results so far) after the app was busy
+        self.gave_up = {}      # wid -> maximized state it was busy in; wait for it to change
 
     def update(self, windows, now, skip_pids=()):
+        """skip_pids: apps to leave alone this scan (ours, Dock, apps still starting up). Their
+        windows don't settle until they are no longer skipped."""
         acts = Actions()
         seen = set()
         for w in windows:
@@ -71,6 +76,9 @@ class Tracker:
             seen.add(w.wid)
             if self.held.get(w.wid, (0.0,))[0] > now:
                 continue
+            if self.gave_up.get(w.wid, not w.maximized) == w.maximized:
+                continue
+            self.gave_up.pop(w.wid, None)
             applied = w.wid in self.applied
             if w.maximized == applied:
                 self.pending.pop(w.wid, None)
@@ -82,7 +90,7 @@ class Tracker:
             if target != w.maximized:
                 self.pending[w.wid] = (w.maximized, now)
                 continue
-            if now - since < self.settle_s:
+            if now - since < (self.apply_settle_s if w.maximized else self.restore_settle_s):
                 continue
             del self.pending[w.wid]
             if w.maximized:
@@ -97,6 +105,8 @@ class Tracker:
                 del self.pending[wid]
         for wid in [wid for wid, (at, _) in self.held.items() if wid not in seen and at <= now]:
             del self.held[wid]
+        for wid in [wid for wid in self.gave_up if wid not in seen]:
+            del self.gave_up[wid]  # disappeared: try again when it is back
         if len(self.applied) > MAX_RECORDS:
             for wid in [wid for wid in self.applied if wid not in seen]:
                 del self.applied[wid]
@@ -110,23 +120,31 @@ class Tracker:
             self._forget(wid, acts)
         self.pending.clear()
         self.held.clear()
+        self.gave_up.clear()
         return acts
 
     def hold(self, pid, wids, now, restoring):
         """The app was busy, so the apply or restore that update() emitted for wids did not run.
         Undo its bookkeeping and emit nothing for these windows until a per-window backoff
-        (1, 2, 4... s, capped at BUSY_MAX_S) has passed. Returns the shortest delay."""
-        delays = []
+        (1, 2 s) has passed. On the BUSY_CHECKS-th busy result in a row, give up on a window until
+        its maximized state changes or it disappears. Returns (shortest delay, or None if all
+        windows were given up; [given up wids])."""
+        delays, given_up = [], []
         for wid in wids:
             if restoring:
                 self.applied[wid] = pid  # still squared; restore again later (the untag is done)
             else:
                 self.applied.pop(wid, None)
                 self.had_shadow.pop(wid, None)
-            delay = min(self.held.get(wid, (0.0, BUSY_BASE_S / 2))[1] * 2, BUSY_MAX_S)
-            self.held[wid] = (now + delay, delay)
+            count = self.held.pop(wid, (0.0, 0))[1] + 1
+            if count >= BUSY_CHECKS:
+                self.gave_up[wid] = not restoring
+                given_up.append(wid)
+                continue
+            delay = BUSY_BASE_S * 2 ** (count - 1)
+            self.held[wid] = (now + delay, count)
             delays.append(delay)
-        return min(delays)
+        return min(delays, default=None), given_up
 
     def _tag(self, wid, now, acts):
         next_at, delay = self.retry.get(wid, (0.0, RETRY_BASE_S / 2))

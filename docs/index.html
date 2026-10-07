@@ -162,7 +162,7 @@
 
   <section>
     <h2>Only maximized windows</h2>
-    <p>A window counts as maximized when it fills its screen's usable area: below the menu bar, beside the Dock. Every other window keeps the normal macOS look. A window gets its normal look back when you un-maximize it, turn NoBorder off, or quit it.</p>
+    <p>A window counts as maximized when it fills its screen's usable area: below the menu bar, beside the Dock. Every other window keeps the normal macOS look. A window gets its normal look back when you un-maximize it, turn NoBorder off, or quit it. A busy app's windows can stay changed if the app is busy when NoBorder quits.</p>
   </section>
 
   <section>
@@ -202,7 +202,7 @@ open /Applications/NoBorder.app</code></pre>
     <h2>Costs and limits</h2>
     <ul>
       <li>An app freezes for about a second each time one of its windows becomes or stops being maximized.</li>
-      <li>A starting or busy app's windows change once the app is idle.</li>
+      <li>NoBorder leaves an app alone for its first 30 seconds after launch.</li>
       <li>Only AppKit windows change corners. That includes Chromium and Electron apps.</li>
       <li>NoBorder uses private macOS APIs, so a macOS update can break it.</li>
     </ul>

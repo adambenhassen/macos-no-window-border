@@ -25,14 +25,16 @@ Website: https://adambenhassen.github.io/macos-no-window-border/
   wherever the app happened to stop can re-enter it and crash it.
 - **Which windows:** `winscan` lists normal windows every 250 ms with their shadow state and
   whether they fill their screen's `NSScreen.visibleFrame` within 2 pt. A window must stay
-  maximized (or not) for 0.5 s before anything changes.
+  maximized for 2 s before it changes, and un-maximized for 0.5 s before it is restored.
 
 Costs and limits:
 
 - An app freezes for ~1 s each time one of its windows becomes or stops being maximized (~3 s
   for the first app after the daemon starts, while lldb parses the shared cache).
-- A starting or busy app's windows are squared once the app is idle. The daemon checks first
-  and runs nothing inside a busy app.
+- NoBorder leaves an app alone for its first 30 s after launch; attaching to a starting app
+  slows it down.
+- The daemon runs nothing inside a busy app. It checks a busy app's window 3 times, then waits
+  until the window changes.
 - Only AppKit windows (including Chromium and Electron apps) change corners. Others keep them.
 - Uses private AppKit and SkyLight APIs. If a macOS update removes the AppKit methods, the
   daemon skips that step instead of crashing the app.
@@ -51,7 +53,8 @@ open /Applications/NoBorder.app
 ```
 
 The menu bar icon shows the status and has Enabled, Launch at Login and Quit. Turning it off
-or quitting restores every window NoBorder changed. While it restores, the menu shows "Stopping: restoring windows…".
+or quitting restores the windows NoBorder changed. While it restores, the menu shows "Stopping: restoring windows…".
+A busy app's windows can stay changed if the app is busy when NoBorder quits.
 
 Logs: `~/Library/Logs/macos-no-window-border.log`.
 

@@ -16,18 +16,22 @@ app can change either. When a window becomes (or stops being) maximized, the dae
 attaches to its app and queues -[NSWindow _setCornerRadius:] plus drawsDecorationView on the
 titlebar container on the app's main run loop. The app is paused for ~1 s per batch (~3 s on
 the first attach, while lldb parses the shared cache). Non-AppKit windows keep their corners.
-That only happens while the app's main thread waits in its run loop; a busy app (for example
-one still starting up) can be paused holding its allocator lock, so nothing runs in it and its
-windows are retried later.
+That only happens while the app's main thread waits in its run loop; a busy app can be paused
+holding its allocator lock, so nothing runs in it and its windows are retried after 1 and 2 s,
+then left alone until they change. Apps launched less than 30 s ago are never attached to.
 
 Requirements: SIP disabled (task_for_pid on Dock and apps), Xcode (its LLDB Python module).
 Usage: noborder.py [--pids PID,PID...]   (--pids: only manage these apps' windows; for testing)
+NOBORDER_GRACE_S overrides the 30 s launch grace (tests/e2e.sh sets 0).
 Prints `status: ...` lines for NoBorder.app. SIGTERM, SIGINT or the parent process exiting
-restores every changed window, then exits.
+restores the changed windows, then exits. A busy app's windows can stay changed if the app is
+still busy 5 s later.
 """
+import ctypes
 import os
 import select
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -40,7 +44,9 @@ NOSHADOW_TAG = 1 << 3
 CORNER_RADIUS = 0.01    # AppKit treats 0 as "use the default radius"; sub-pixel draws square
 IDLE_TRAPS = {"mach_msg2_trap", "mach_msg_trap"}
 SHUTDOWN_RETRY_S = 5.0  # how long the restore on exit keeps retrying busy apps
+GRACE_S = float(os.environ.get("NOBORDER_GRACE_S", 30))  # never attach to an app this new
 lldb = None             # LLDB Python module, loaded by load_lldb()
+libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
 
 
 def emit(text):
@@ -94,6 +100,15 @@ def pid_alive(pid):
     except PermissionError:
         return True
     return True
+
+
+def launch_time(pid):
+    """The process's start time (epoch seconds), or None if it can't be read."""
+    info = ctypes.create_string_buffer(136)  # struct proc_bsdinfo; pbi_start_tvsec at offset 120
+    if libproc.proc_pidinfo(pid, 3, ctypes.c_uint64(0), info, len(info)) != len(info):  # PROC_PIDTBSDINFO
+        return None
+    sec, usec = struct.unpack_from("QQ", info, 120)
+    return sec + usec / 1e6
 
 
 def tag_expr(wids, function):
@@ -182,7 +197,9 @@ class Apps:
             self.debugger.DeleteTarget(target)
             return "failed"
         try:
-            thread = process.GetThreadAtIndex(0)  # main thread; AppKit must be called there
+            # AppKit must be called on the main thread
+            thread = next((t for t in map(process.GetThreadAtIndex, range(process.GetNumThreads()))
+                           if t.GetQueueName() == "com.apple.main-thread"), process.GetThreadAtIndex(0))
             if not main_thread_idle(thread):
                 return "busy"
             process.SetSelectedThread(thread)
@@ -303,7 +320,11 @@ def run(acts, dock, apps):
         log(f"restoring pid {pid}: {' '.join(map(str, wids))}")
         if apps.restore(pid, wids) == "busy":
             busy.append((pid, wids, True))
+    busy_pids = {pid for pid, _, _ in busy}
     for pid, wids in acts.apply.items():
+        if pid in busy_pids:  # just found busy; don't pause it again
+            busy.append((pid, wids, False))
+            continue
         log(f"squaring pid {pid}: {' '.join(map(str, wids))}")
         if apps.apply(pid, wids) == "busy":
             busy.append((pid, wids, False))
@@ -342,6 +363,7 @@ def main():
 
     reported = None
     attach_failed = False
+    launched = {}  # pid -> launch time, for the pids in the latest scan
     try:
         while not stop["flag"]:
             if dock.process is None and not dock.attach():
@@ -381,10 +403,18 @@ def main():
                     windows = windowstate.parse_watch(line)
                     if only is not None:
                         windows = [w for w in windows if w.pid in only]
-                    skip = {os.getpid(), parent, dock.process.GetProcessID()}
-                    for pid, wids, restoring in run(tracker.update(windows, time.time(), skip), dock, apps):
-                        delay = tracker.hold(pid, wids, time.time(), restoring)
-                        log(f"pid {pid} busy; retrying in {delay:g} s")
+                    now = time.time()
+                    launched = {w.pid: launched[w.pid] if w.pid in launched else launch_time(w.pid)
+                                for w in windows}
+                    young = {pid for pid, at in launched.items() if at is not None and now - at < GRACE_S}
+                    skip = {os.getpid(), parent, dock.process.GetProcessID()} | young
+                    for pid, wids, restoring in run(tracker.update(windows, now, skip), dock, apps):
+                        delay, given_up = tracker.hold(pid, wids, time.time(), restoring)
+                        if delay is not None:
+                            log(f"pid {pid} busy; retrying in {delay:g} s")
+                        for wid in given_up:
+                            log(f"pid {pid} window {wid} still busy after {windowstate.BUSY_CHECKS} checks;"
+                                " waiting for the window to change")
                     count = sum(1 for w in windows if w.wid in tracker.applied)
                     if count != reported:
                         reported = count
