@@ -266,6 +266,8 @@ def run(acts, dock, apps):
     if acts.untag and dock.process:
         log(f"untagging {' '.join(map(str, acts.untag))}")
         dock.untag(acts.untag)
+    elif acts.untag:
+        log(f"Dock not attached; could not untag {' '.join(map(str, acts.untag))}")
     for pid, wids in acts.restore.items():
         log(f"restoring pid {pid}: {' '.join(map(str, wids))}")
         apps.restore(pid, wids)
@@ -275,6 +277,8 @@ def run(acts, dock, apps):
     if acts.tag and dock.process:
         log(f"tagging {' '.join(map(str, acts.tag))}")
         dock.tag(acts.tag)
+    elif acts.tag:
+        log(f"Dock not attached; could not tag {' '.join(map(str, acts.tag))}")
 
 
 def main():
@@ -304,49 +308,55 @@ def main():
 
     reported = None
     attach_failed = False
-    while not stop["flag"]:
-        if dock.process is None and not dock.attach():
-            if not attach_failed:
-                status("Dock attach failed")
-                attach_failed = True
-            time.sleep(2)
-            continue
-        attach_failed = False
-        scanner = subprocess.Popen([WINSCAN, "--watch"], stdout=subprocess.PIPE, text=True)
-        try:
-            while not stop["flag"]:
-                line = scanner.stdout.readline()
-                if line == "":
-                    log("winscan exited; restarting")
-                    break
+    try:
+        while not stop["flag"]:
+            if dock.process is None and not dock.attach():
                 if os.getppid() != parent:
                     log("parent process exited; stopping")
-                    stop["flag"] = True
                     break
-                if not dock.alive():
-                    break
-                windows = windowstate.parse_watch(line)
-                if only is not None:
-                    windows = [w for w in windows if w.pid in only]
-                skip = {os.getpid(), parent, dock.process.GetProcessID()}
-                run(tracker.update(windows, time.time(), skip), dock, apps)
-                if len(tracker.applied) != reported:
-                    reported = len(tracker.applied)
-                    status(f"running, {reported} windows")
-        finally:
-            scanner.kill()
-            scanner.wait()
-
-    acts = tracker.restore_all()
-    acts.restore = {pid: wids for pid, wids in acts.restore.items() if pid_alive(pid)}
-    if not acts.empty():
-        if dock.process is None:
-            dock.attach()
-        run(acts, dock, apps)
-    if dock.process is not None:
-        dock.detach()
-    log("exiting")
-    status("stopped")
+                if not attach_failed:
+                    status("Dock attach failed")
+                    attach_failed = True
+                    reported = None
+                time.sleep(2)
+                continue
+            attach_failed = False
+            scanner = subprocess.Popen([WINSCAN, "--watch"], stdout=subprocess.PIPE, text=True)
+            try:
+                while not stop["flag"]:
+                    line = scanner.stdout.readline()
+                    if not line.endswith("\n"):  # EOF, or winscan died mid-line
+                        log("winscan exited; restarting")
+                        break
+                    if os.getppid() != parent:
+                        log("parent process exited; stopping")
+                        stop["flag"] = True
+                        break
+                    if not dock.alive():
+                        break
+                    windows = windowstate.parse_watch(line)
+                    if only is not None:
+                        windows = [w for w in windows if w.pid in only]
+                    skip = {os.getpid(), parent, dock.process.GetProcessID()}
+                    run(tracker.update(windows, time.time(), skip), dock, apps)
+                    count = sum(1 for w in windows if w.wid in tracker.applied)
+                    if count != reported:
+                        reported = count
+                        status(f"running, {reported} windows")
+            finally:
+                scanner.kill()
+                scanner.wait()
+    finally:
+        acts = tracker.restore_all()
+        acts.restore = {pid: wids for pid, wids in acts.restore.items() if pid_alive(pid)}
+        if not acts.empty():
+            if dock.process is None:
+                dock.attach()
+            run(acts, dock, apps)
+        if dock.process is not None:
+            dock.detach()
+        log("exiting")
+        status("stopped")
     return 0
 
 
