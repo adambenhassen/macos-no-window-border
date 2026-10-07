@@ -6,14 +6,22 @@ winscan: winscan.m
 	clang -O2 -Wall -fobjc-arc -o $@ $< -framework AppKit -framework CoreGraphics \
 		-F/System/Library/PrivateFrameworks -framework SkyLight
 
-app: winscan
+build/AppIcon.icns: app/make-icon.swift
+	mkdir -p build
+	swift app/make-icon.swift $@
+
+app: winscan build/AppIcon.icns
 	cd app && swift build -c release
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp app/Info.plist $(APP)/Contents/Info.plist
 	cp app/.build/release/NoBorder $(APP)/Contents/MacOS/NoBorder
-	cp noborder.py windowstate.py winscan $(APP)/Contents/Resources/
+	cp noborder.py windowstate.py winscan build/AppIcon.icns $(APP)/Contents/Resources/
 	codesign --force --sign - $(APP)
+
+release: app
+	rm -f build/NoBorder.zip
+	ditto -c -k --keepParent $(APP) build/NoBorder.zip
 
 install: app
 	rm -rf /Applications/NoBorder.app
@@ -34,4 +42,4 @@ tests/winpixels: tests/winpixels.c
 clean:
 	rm -rf winscan build app/.build tests/hostapp tests/winpixels
 
-.PHONY: all app install test testtools clean
+.PHONY: all app release install test testtools clean
