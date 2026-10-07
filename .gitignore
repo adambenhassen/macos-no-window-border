@@ -1,1 +1,6 @@
 winscan
+build/
+app/.build/
+tests/hostapp
+tests/winpixels
+__pycache__/

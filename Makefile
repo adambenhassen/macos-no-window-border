@@ -4,9 +4,17 @@ UID  := $(shell id -u)
 
 all: winscan
 
-winscan: winscan.c
-	clang -O2 -Wall -o $@ $< -framework CoreFoundation -framework CoreGraphics \
+winscan: winscan.m
+	clang -O2 -Wall -fobjc-arc -o $@ $< -framework AppKit -framework CoreGraphics \
 		-F/System/Library/PrivateFrameworks -framework SkyLight
+
+testtools: tests/hostapp tests/winpixels
+
+tests/hostapp: tests/hostapp.swift
+	swiftc -O -o $@ $<
+
+tests/winpixels: tests/winpixels.c
+	clang -O2 -Wall -o $@ $< -framework CoreGraphics -framework ImageIO -framework CoreFoundation
 
 install: winscan
 	mkdir -p $(HOME)/Library/LaunchAgents $(HOME)/Library/Logs
@@ -25,4 +33,4 @@ status:
 clean:
 	rm -f winscan
 
-.PHONY: all install uninstall status clean
+.PHONY: all install uninstall status clean testtools
