@@ -1,25 +1,26 @@
 #!/Applications/Xcode.app/Contents/Developer/usr/bin/python3
 """
-noborder: remove the 1px gray outline (and shadow), the rounded corners and the titlebar
-rim highlight from every normal macOS window.
+noborder: make maximized macOS windows edge to edge: no 1px gray outline (and shadow), square
+corners, no titlebar rim highlight. Other windows keep the normal look, and a window that stops
+being maximized gets back exactly what noborder changed.
 
 The outline is drawn by WindowServer as part of the shadow. It goes away when a window
 carries WindowServer tag bit 3 (what NSWindow.hasShadow = NO sets). WindowServer only
 accepts that tag from the window's owner or from Dock's privileged connection, so this
-daemon keeps one lldb session attached to Dock and, whenever `winscan --watch` reports
-a normal window that still has a shadow, briefly interrupts Dock, calls SLSSetWindowTags
-from inside it, and resumes. Dock is paused for a few milliseconds per batch.
+daemon keeps one lldb session attached to Dock and briefly interrupts it to call
+SLSSetWindowTags / SLSClearWindowTags from inside. Dock is paused for a few milliseconds.
 
 The rounded corners are a mask AppKit hands WindowServer for each window, and the light
 rim along the titlebar edge is drawn by AppKit's titlebar decoration view; only the owning
-app can change either. For every new window the daemon briefly attaches to its app and
-queues -[NSWindow _setCornerRadius:] with a sub-pixel radius, plus drawsDecorationView = NO
-on the titlebar container, on the app's main run loop. The app is paused for ~1 s per
-batch (~3 s on the first attach, while lldb parses the shared cache). Non-AppKit windows
-keep their corners.
+app can change either. When a window becomes (or stops being) maximized, the daemon briefly
+attaches to its app and queues -[NSWindow _setCornerRadius:] plus drawsDecorationView on the
+titlebar container on the app's main run loop. The app is paused for ~1 s per batch (~3 s on
+the first attach, while lldb parses the shared cache). Non-AppKit windows keep their corners.
 
 Requirements: SIP disabled (task_for_pid on Dock and apps), Xcode (its LLDB Python module).
-Usage: noborder.py [--once]   (--once: fix current windows, detach, exit)
+Usage: noborder.py [--pids PID,PID...]   (--pids: only manage these apps' windows; for testing)
+Prints `status: ...` lines for NoBorder.app. SIGTERM, SIGINT or the parent process exiting
+restores every changed window, then exits.
 """
 import os
 import signal
@@ -27,20 +28,39 @@ import subprocess
 import sys
 import time
 
-XCODE = subprocess.run(["xcode-select", "-p"], capture_output=True, text=True, check=True).stdout.strip()
-sys.path.insert(0, os.path.join(os.path.dirname(XCODE), "SharedFrameworks/LLDB.framework/Resources/Python"))
-import lldb  # noqa: E402
+import windowstate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WINSCAN = os.path.join(HERE, "winscan")
 NOSHADOW_TAG = 1 << 3
-RETRY_BASE_S = 2.0      # back off windows whose app keeps restoring its shadow
-RETRY_MAX_S = 120.0
 CORNER_RADIUS = 0.01    # AppKit treats 0 as "use the default radius"; sub-pixel draws square
+lldb = None             # LLDB Python module, loaded by load_lldb()
 
 
 def log(msg):
     print(time.strftime("%Y-%m-%d %H:%M:%S"), msg, flush=True)
+
+
+def status(msg):
+    print(f"status: {msg}", flush=True)
+
+
+def sip_blocks_debugging():
+    out = subprocess.run(["csrutil", "status"], capture_output=True, text=True).stdout
+    return "status: disabled" not in out and "Debugging Restrictions: disabled" not in out
+
+
+def load_lldb():
+    try:
+        xcode = subprocess.run(["xcode-select", "-p"], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    sys.path.insert(0, os.path.join(os.path.dirname(xcode), "SharedFrameworks/LLDB.framework/Resources/Python"))
+    try:
+        import lldb as module
+    except ImportError:
+        return None
+    return module
 
 
 def dock_pid():
@@ -48,9 +68,19 @@ def dock_pid():
     return int(out[0]) if out else None
 
 
-def tag_expr(wids):
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def tag_expr(wids, function):
     calls = "".join(
-        f"r |= (int)SLSSetWindowTags(c, (unsigned int){w}, &t, 64);" for w in wids
+        f"r |= (int){function}(c, (unsigned int){w}, &t, 64);" for w in wids
     )
     return f"({{ unsigned long long t = {NOSHADOW_TAG}ULL; int c = (int)SLSMainConnectionID(); int r = 0; {calls} r; }})"
 
@@ -67,17 +97,19 @@ def queue_call(target, selector, args):
     )
 
 
-def corner_expr(wids):
+def window_expr(wids, apply):
     # Running AppKit code at an arbitrary pause point can re-enter the app and crash it, so the
     # expression only queues calls on the main run loop via NSInvocation:
-    #   [window _setCornerRadius:]                                   square corners
-    #   [window setValue:@NO forKeyPath:@"_titlebarContainerView.drawsDecorationView"]
-    #                                                                drop the titlebar rim highlight
+    #   [window _setCornerRadius:]          0.01 squares the corners; 0 restores the default
+    #   [window setValue:@NO/@YES forKeyPath:@"_titlebarContainerView.drawsDecorationView"]
+    #                                       drops or restores the titlebar rim highlight
     # Plain C (objc_msgSend casts) compiles several times faster than an ObjC expression.
+    radius = CORNER_RADIUS if apply else 0.0
+    decoration = 0 if apply else 1
     calls = "".join(
         f"w = msg(a, sel(\"windowWithWindowNumber:\"), (void *){w}L);"
         f" if (w) {{ {queue_call('w', 'cr', ['&r'])}"
-        f" if (rim) {queue_call('w', 'kvc', ['&no', '&path'])} n++; }}"
+        f" if (rim) {queue_call('w', 'kvc', ['&flag', '&path'])} n++; }}"
         for w in wids
     )
     return (
@@ -88,11 +120,11 @@ def corner_expr(wids):
         " void (*post)(void *, void *, void *, void *, unsigned char) ="
         " (void (*)(void *, void *, void *, void *, unsigned char))objc_msgSend;"
         " unsigned char (*responds)(void *, void *) = (unsigned char (*)(void *, void *))class_respondsToSelector;"
-        f" void *a = *(void **)&NSApp; void *cr = sel(\"_setCornerRadius:\"); double r = {CORNER_RADIUS};"
+        f" void *a = *(void **)&NSApp; void *cr = sel(\"_setCornerRadius:\"); double r = {radius};"
         " void *kvc = sel(\"setValue:forKeyPath:\");"
         " int rim = responds(cls(\"NSWindow\"), sel(\"_titlebarContainerView\"))"
         " && responds(cls(\"NSTitlebarContainerView\"), sel(\"setDrawsDecorationView:\"));"
-        " void *no = msg(cls(\"NSNumber\"), sel(\"numberWithBool:\"), 0);"
+        f" void *flag = msg(cls(\"NSNumber\"), sel(\"numberWithBool:\"), (void *){decoration}L);"
         " void *path = msg(cls(\"NSString\"), sel(\"stringWithUTF8String:\"),"
         " (void *)\"_titlebarContainerView.drawsDecorationView\");"
         " void *w = 0; int n = -1;"
@@ -108,7 +140,13 @@ class Apps:
         self.debugger = lldb.SBDebugger.Create()
         self.debugger.SetAsync(False)
 
-    def square(self, pid, wids):
+    def apply(self, pid, wids):
+        return self._run(pid, wids, apply=True)
+
+    def restore(self, pid, wids):
+        return self._run(pid, wids, apply=False)
+
+    def _run(self, pid, wids, apply):
         target = self.debugger.CreateTarget("")
         err = lldb.SBError()
         process = target.AttachToProcessWithID(self.debugger.GetListener(), pid, err)
@@ -123,26 +161,20 @@ class Apps:
             opts.SetLanguage(lldb.eLanguageTypeC)
             opts.SetTryAllThreads(False)
             opts.SetTimeoutInMicroSeconds(2_000_000)
-            val = thread.GetFrameAtIndex(0).EvaluateExpression(corner_expr(wids), opts)
+            val = thread.GetFrameAtIndex(0).EvaluateExpression(window_expr(wids, apply), opts)
             ok = val.IsValid() and val.GetError().Success()
             n = val.GetValueAsSigned() if ok else None
         finally:
             process.Detach()
             self.debugger.DeleteTarget(target)
+        verb = "squared" if apply else "restored"
         if not ok:
             log(f"pid {pid}: expression failed: {val.GetError()}")
         elif n < 0:
             log(f"pid {pid}: not an AppKit app; corners left as is")
         elif n != len(wids):
-            log(f"pid {pid}: squared {n} of {len(wids)} window(s)")
+            log(f"pid {pid}: {verb} {n} of {len(wids)} window(s)")
         return ok and n == len(wids)
-
-
-def by_pid(windows):
-    groups = {}
-    for wid, pid in windows:
-        groups.setdefault(int(pid), []).append(wid)
-    return groups
 
 
 class Dock:
@@ -201,19 +233,26 @@ class Dock:
         return False
 
     def tag(self, wids):
+        return self._tags(wids, "SLSSetWindowTags")
+
+    def untag(self, wids):
+        return self._tags(wids, "SLSClearWindowTags")
+
+    def _tags(self, wids, function):
         self.process.Stop()
         if not self.wait_state(lldb.eStateStopped):
             log("interrupt timed out")
             return False
         frame = self.process.GetSelectedThread().GetSelectedFrame()
-        val = frame.EvaluateExpression(tag_expr(wids))
+        val = frame.EvaluateExpression(tag_expr(wids, function))
         ok = val.IsValid() and val.GetError().Success()
         rc = val.GetValueAsSigned() if ok else None
         self.process.Continue()
+        self.wait_state(lldb.eStateRunning)
         if not ok:
             log(f"expression failed: {val.GetError()}")
         elif rc != 0:
-            log(f"SLSSetWindowTags returned {rc} for {wids}")
+            log(f"{function} returned {rc} for {wids}")
         return ok and rc == 0
 
     def detach(self):
@@ -223,10 +262,38 @@ class Dock:
         self.debugger.DeleteTarget(self.debugger.GetSelectedTarget())
 
 
+def run(acts, dock, apps):
+    if acts.untag and dock.process:
+        log(f"untagging {' '.join(map(str, acts.untag))}")
+        dock.untag(acts.untag)
+    for pid, wids in acts.restore.items():
+        log(f"restoring pid {pid}: {' '.join(map(str, wids))}")
+        apps.restore(pid, wids)
+    for pid, wids in acts.apply.items():
+        log(f"squaring pid {pid}: {' '.join(map(str, wids))}")
+        apps.apply(pid, wids)
+    if acts.tag and dock.process:
+        log(f"tagging {' '.join(map(str, acts.tag))}")
+        dock.tag(acts.tag)
+
+
 def main():
-    once = "--once" in sys.argv
+    global lldb
+    only = None
+    if "--pids" in sys.argv:
+        only = {int(p) for p in sys.argv[sys.argv.index("--pids") + 1].split(",")}
+    if sip_blocks_debugging():
+        status("SIP enabled")
+        return 1
+    lldb = load_lldb()
+    if lldb is None:
+        status("Xcode missing")
+        return 1
+
     dock = Dock()
     apps = Apps()
+    tracker = windowstate.Tracker()
+    parent = os.getppid()
     stop = {"flag": False}
 
     def on_signal(signum, _frame):
@@ -235,27 +302,16 @@ def main():
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
 
-    if once:
-        rows = [line.split("\t") for line in subprocess.run([WINSCAN, "--all"], capture_output=True, text=True).stdout.splitlines()]
-        for pid, pwids in by_pid((r[0], r[1]) for r in rows).items():
-            log(f"squaring pid {pid}: {' '.join(pwids)}")
-            apps.square(pid, pwids)
-        time.sleep(0.5)  # squaring restores the shadow once the app runs the queued call; tag after
-        wids = [line.split("\t")[0] for line in subprocess.run([WINSCAN], capture_output=True, text=True).stdout.splitlines()]
-        if not wids:
-            log("nothing to tag")
-        elif dock.attach():
-            log(f"tagging {len(wids)} window(s): {' '.join(wids)}")
-            dock.tag(wids)
-            dock.detach()
-        return
-
-    retry_at = {}
-    squared = set()  # wids whose corners were handled (or failed); attaching again won't help
+    reported = None
+    attach_failed = False
     while not stop["flag"]:
         if dock.process is None and not dock.attach():
+            if not attach_failed:
+                status("Dock attach failed")
+                attach_failed = True
             time.sleep(2)
             continue
+        attach_failed = False
         scanner = subprocess.Popen([WINSCAN, "--watch"], stdout=subprocess.PIPE, text=True)
         try:
             while not stop["flag"]:
@@ -263,36 +319,36 @@ def main():
                 if line == "":
                     log("winscan exited; restarting")
                     break
+                if os.getppid() != parent:
+                    log("parent process exited; stopping")
+                    stop["flag"] = True
+                    break
                 if not dock.alive():
                     break
-                now = time.time()
-                windows = [t.split(":") for t in line.split()]
-                wids = [w for w, _, shadow in windows if shadow == "1" and retry_at.get(w, (0, 0))[0] <= now]
-                if wids:
-                    for w in wids:
-                        _, delay = retry_at.get(w, (0, RETRY_BASE_S / 2))
-                        delay = min(delay * 2, RETRY_MAX_S)
-                        retry_at[w] = (now + delay, delay)
-                    log(f"tagging {' '.join(wids)}")
-                    dock.tag(wids)
-                    if len(retry_at) > 4096:
-                        retry_at = {w: v for w, v in retry_at.items() if v[0] > now}
-                skip = {os.getpid(), dock.process.GetProcessID()}
-                fresh = [(w, pid) for w, pid, _ in windows if w not in squared and int(pid) not in skip]
-                for pid, pwids in by_pid(fresh).items():
-                    squared.update(pwids)
-                    log(f"squaring pid {pid}: {' '.join(pwids)}")
-                    apps.square(pid, pwids)
-                    for w in pwids:  # AppKit restores the shadow once; retag on the next scan
-                        retry_at.pop(w, None)
-                if len(squared) > 4096:
-                    squared &= {w for w, _, _ in windows}
+                windows = windowstate.parse_watch(line)
+                if only is not None:
+                    windows = [w for w in windows if w.pid in only]
+                skip = {os.getpid(), parent, dock.process.GetProcessID()}
+                run(tracker.update(windows, time.time(), skip), dock, apps)
+                if len(tracker.applied) != reported:
+                    reported = len(tracker.applied)
+                    status(f"running, {reported} windows")
         finally:
             scanner.kill()
             scanner.wait()
-    dock.detach()
+
+    acts = tracker.restore_all()
+    acts.restore = {pid: wids for pid, wids in acts.restore.items() if pid_alive(pid)}
+    if not acts.empty():
+        if dock.process is None:
+            dock.attach()
+        run(acts, dock, apps)
+    if dock.process is not None:
+        dock.detach()
     log("exiting")
+    status("stopped")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
