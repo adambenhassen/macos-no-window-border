@@ -18,7 +18,7 @@ final class DaemonController: ObservableObject {
     private var lastLine = ""
     private var lines = LineBuffer()
     private var policy = RestartPolicy()
-    private let log = DaemonController.openLog()
+    private var log = DaemonController.openLog()
 
     init() {
         enabled = UserDefaults.standard.object(forKey: "enabled") as? Bool ?? true
@@ -113,7 +113,14 @@ final class DaemonController: ObservableObject {
     }
 
     private func received(_ data: Data) {
-        log?.write(data)
+        if let log {
+            do {
+                try log.write(contentsOf: data)
+            } catch {  // e.g. disk full: keep the daemon running, stop logging
+                NSLog("NoBorder: stopped writing the daemon log: %@", error.localizedDescription)
+                self.log = nil
+            }
+        }
         for line in lines.append(data) {
             if !line.isEmpty { lastLine = line }
             guard !userStopped, let parsed = parseStatusLine(line) else { continue }

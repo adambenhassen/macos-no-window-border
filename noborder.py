@@ -23,6 +23,7 @@ Prints `status: ...` lines for NoBorder.app. SIGTERM, SIGINT or the parent proce
 restores every changed window, then exits.
 """
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -37,12 +38,24 @@ CORNER_RADIUS = 0.01    # AppKit treats 0 as "use the default radius"; sub-pixel
 lldb = None             # LLDB Python module, loaded by load_lldb()
 
 
+def emit(text):
+    try:
+        print(text, flush=True)
+    except OSError:
+        # The reader is gone (NoBorder.app quit; Python ignores SIGPIPE, so the write raises
+        # BrokenPipeError). Send stdout to /dev/null from now on, including the unwritten
+        # buffer and the exit flush, so restoring the windows still completes.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+
+
 def log(msg):
-    print(time.strftime("%Y-%m-%d %H:%M:%S"), msg, flush=True)
+    emit(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
 
 
 def status(msg):
-    print(f"status: {msg}", flush=True)
+    emit(f"status: {msg}")
 
 
 def sip_blocks_debugging():
@@ -321,17 +334,27 @@ def main():
                 time.sleep(2)
                 continue
             attach_failed = False
-            scanner = subprocess.Popen([WINSCAN, "--watch"], stdout=subprocess.PIPE, text=True)
+            scanner = subprocess.Popen([WINSCAN, "--watch"], stdout=subprocess.PIPE, bufsize=0)
+            fd = scanner.stdout.fileno()
+            partial = b""
             try:
                 while not stop["flag"]:
-                    line = scanner.stdout.readline()
-                    if not line.endswith("\n"):  # EOF, or winscan died mid-line
-                        log("winscan exited; restarting")
-                        break
+                    # winscan writes a line every 250 ms and an action takes up to ~1 s, so lines
+                    # queue up. Act only on the newest one; older ones show stale window states.
+                    readable = select.select([fd], [], [], 1.0)[0]
                     if os.getppid() != parent:
                         log("parent process exited; stopping")
                         stop["flag"] = True
                         break
+                    if not readable:
+                        continue
+                    data = os.read(fd, 1 << 20)  # more than a pipe holds: everything available
+                    if not data:  # EOF: winscan exited (a partial last line is dropped)
+                        log("winscan exited; restarting")
+                        break
+                    line, partial = windowstate.latest_line(partial + data)
+                    if line is None:
+                        continue
                     if not dock.alive():
                         break
                     windows = windowstate.parse_watch(line)

@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from windowstate import Actions, Tracker, Window, parse_watch  # noqa: E402
+from windowstate import Actions, Tracker, Window, latest_line, parse_watch  # noqa: E402
 
 PID = 500
 
@@ -16,6 +16,35 @@ def settle(tracker, windows, start=0.0):
     """Run scans at start and start + 0.5 s; return the second scan's actions."""
     tracker.update(windows, start)
     return tracker.update(windows, start + 0.5)
+
+
+class LatestLineTest(unittest.TestCase):
+    def test_empty(self):
+        self.assertEqual(latest_line(b""), (None, b""))
+
+    def test_partial_line_is_kept(self):
+        self.assertEqual(latest_line(b"12:500:1"), (None, b"12:500:1"))
+
+    def test_one_line(self):
+        self.assertEqual(latest_line(b"12:500:1:0\n"), ("12:500:1:0", b""))
+
+    def test_empty_line(self):
+        self.assertEqual(latest_line(b"\n"), ("", b""))
+
+    def test_newest_of_many_lines(self):
+        self.assertEqual(
+            latest_line(b"12:500:1:0\n12:500:0:1\n12:500:0:0\n"), ("12:500:0:0", b"")
+        )
+
+    def test_newest_complete_line_and_partial_rest(self):
+        self.assertEqual(
+            latest_line(b"12:500:1:0\n12:500:0:1\n12:50"), ("12:500:0:1", b"12:50")
+        )
+
+    def test_partial_line_completed_by_next_read(self):
+        line, rest = latest_line(b"12:500:1:0\n13:5")
+        self.assertEqual(line, "12:500:1:0")
+        self.assertEqual(latest_line(rest + b"01:0:1\n"), ("13:501:0:1", b""))
 
 
 class ParseWatchTest(unittest.TestCase):

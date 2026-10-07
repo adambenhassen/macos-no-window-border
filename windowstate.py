@@ -3,6 +3,7 @@ windowstate: decide which windows noborder changes. Pure logic with no lldb, so 
 unit tested. noborder.py feeds it each `winscan --watch` line and executes the Actions.
 """
 from dataclasses import dataclass, field
+from typing import Optional, Tuple
 
 SETTLE_S = 0.5          # a window's maximized state must hold this long before acting
 RETRY_BASE_S = 2.0      # back off windows whose app keeps restoring its shadow
@@ -36,6 +37,16 @@ def parse_watch(line):
         wid, pid, shadow, maximized = token.split(":")
         windows.append(Window(int(wid), int(pid), shadow == "1", maximized == "1"))
     return windows
+
+
+def latest_line(buffer: bytes) -> Tuple[Optional[str], bytes]:
+    """Split buffered `winscan --watch` output into its newest complete line (None if there is
+    none yet) and the incomplete rest, which the caller prepends to its next read."""
+    end = buffer.rfind(b"\n")
+    if end < 0:
+        return None, buffer
+    start = buffer.rfind(b"\n", 0, end) + 1
+    return buffer[start:end].decode(), buffer[end + 1:]
 
 
 class Tracker:
