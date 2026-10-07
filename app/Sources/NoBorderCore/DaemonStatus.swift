@@ -4,6 +4,7 @@ import Foundation
 public enum DaemonStatus: Equatable {
     case off
     case starting
+    case stopping                  // user stop in progress; the daemon is restoring windows
     case running(windows: Int)
     case note(String)              // non-fatal daemon status, e.g. "Dock attach failed"
     case fatal(String)             // "SIP enabled", "Xcode missing", or an app-side setup error
@@ -13,6 +14,7 @@ public enum DaemonStatus: Equatable {
         switch self {
         case .off: return "Off"
         case .starting: return "Starting…"
+        case .stopping: return "Stopping: restoring windows…"
         case .running(let n): return n == 1 ? "Running: 1 window squared" : "Running: \(n) windows squared"
         case .note(let text): return text
         case .fatal(let reason): return "Can't run: \(reason)"

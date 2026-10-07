@@ -11,6 +11,9 @@ final class DaemonController: ObservableObject {
 
     private var process: Process?
     private var userStopped = false
+    private var quitting = false
+    private var exitCode: Int32?  // set when the process has exited
+    private var outputDone = false  // set when its output pipe reached EOF
     private var onStopped: [() -> Void] = []
     private var lastLine = ""
     private var lines = LineBuffer()
@@ -30,35 +33,55 @@ final class DaemonController: ObservableObject {
 
     /// Stops the daemon (it restores changed windows), then quits the app.
     func quit() {
+        quitting = true
         stop { NSApplication.shared.terminate(nil) }
     }
 
     private func start() {
         guard process == nil else { return }
-        guard let python = DaemonController.xcodePython() else { fail("Xcode missing"); return }
         guard let script = Bundle.main.path(forResource: "noborder", ofType: "py") else {
             fail("noborder.py missing from the app bundle")
             return
         }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: python)
-        p.arguments = [script]
+        // xcrun runs the selected Xcode's python3 (it can import LLDB). Without Xcode the
+        // daemon reports "status: Xcode missing".
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["python3", script]
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        // Both handlers hop to the main queue in order (unlike unstructured Tasks); the exit is
+        // acted on only after the output is complete, so the last lines are never lost or late.
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak p] handle in
             let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil  // EOF
-                return
+            let eof = data.isEmpty
+            if eof { handle.readabilityHandler = nil }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let p, p === self.process else { return }
+                    if eof {
+                        self.outputDone = true
+                        self.finishIfDone()
+                    } else {
+                        self.received(data)
+                    }
+                }
             }
-            Task { @MainActor in self?.received(data) }
         }
         p.terminationHandler = { [weak self] proc in
             let code = proc.terminationStatus
-            Task { @MainActor in self?.terminated(code) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, proc === self.process else { return }
+                    self.exitCode = code
+                    self.finishIfDone()
+                }
+            }
         }
         userStopped = false
+        exitCode = nil
+        outputDone = false
         lastLine = ""
         lines = LineBuffer()
         status = .starting
@@ -78,11 +101,12 @@ final class DaemonController: ObservableObject {
             return
         }
         userStopped = true
+        status = .stopping
         onStopped.append(done)
         p.terminate()  // SIGTERM: the daemon restores changed windows, then exits
         let pid = p.processIdentifier
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-            guard let self, self.process === p else { return }
+            guard let self, self.process === p, self.exitCode == nil else { return }
             kill(pid, SIGKILL)
         }
     }
@@ -91,10 +115,15 @@ final class DaemonController: ObservableObject {
         log?.write(data)
         for line in lines.append(data) {
             if !line.isEmpty { lastLine = line }
-            guard let parsed = parseStatusLine(line) else { continue }
+            guard !userStopped, let parsed = parseStatusLine(line) else { continue }
             if parsed == .note("stopped") { continue }
             status = parsed
         }
+    }
+
+    private func finishIfDone() {
+        guard outputDone, let code = exitCode else { return }
+        terminated(code)
     }
 
     private func terminated(_ code: Int32) {
@@ -104,6 +133,7 @@ final class DaemonController: ObservableObject {
             let callbacks = onStopped
             onStopped = []
             callbacks.forEach { $0() }
+            if enabled && !quitting { start() }  // re-enabled while the daemon was stopping
             return
         }
         if case .fatal(let reason) = status {
@@ -125,26 +155,6 @@ final class DaemonController: ObservableObject {
         status = .fatal(reason)
         enabled = false
         UserDefaults.standard.set(false, forKey: "enabled")
-    }
-
-    /// Xcode's python3, which can import the LLDB module. nil if Xcode isn't selected.
-    private static func xcodePython() -> String? {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        p.arguments = ["-p"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        do {
-            try p.run()
-        } catch {
-            return nil
-        }
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else { return nil }
-        let dir = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let python = dir + "/usr/bin/python3"
-        return FileManager.default.isExecutableFile(atPath: python) ? python : nil
     }
 
     /// ~/Library/Logs/macos-no-window-border.log, opened for appending. nil disables logging.

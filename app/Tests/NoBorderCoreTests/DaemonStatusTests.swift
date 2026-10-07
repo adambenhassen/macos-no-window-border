@@ -27,5 +27,6 @@ final class DaemonStatusTests: XCTestCase {
         XCTAssertEqual(DaemonStatus.crashed(lastLine: "").menuText, "Stopped: crashed")
         XCTAssertEqual(DaemonStatus.crashed(lastLine: "boom").menuText, "Stopped: crashed (boom)")
         XCTAssertEqual(DaemonStatus.off.menuText, "Off")
+        XCTAssertEqual(DaemonStatus.stopping.menuText, "Stopping: restoring windows…")
     }
 }
