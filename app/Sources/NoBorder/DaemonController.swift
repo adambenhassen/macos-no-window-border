@@ -44,8 +44,9 @@ final class DaemonController: ObservableObject {
             return
         }
         let p = Process()
-        // xcrun runs the selected Xcode's python3 (it can import LLDB). Without Xcode the
-        // daemon reports "status: Xcode missing".
+        // xcrun runs the selected Xcode's python3 (it can import LLDB). An xcrun or python
+        // failure before the daemon starts is treated as fatal in terminated(); the daemon
+        // itself reports "status: Xcode missing" when LLDB can't load.
         p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         p.arguments = ["python3", script]
         let pipe = Pipe()
@@ -138,6 +139,10 @@ final class DaemonController: ObservableObject {
         }
         if case .fatal(let reason) = status {
             fail(reason)
+            return
+        }
+        if code != 0, status == .starting {  // exited before any "status:" line: xcrun/python failed
+            fail(lastLine.isEmpty ? "can't start python3 via xcrun" : lastLine)
             return
         }
         if policy.allowRestart(at: Date()) {
