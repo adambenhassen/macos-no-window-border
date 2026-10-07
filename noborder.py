@@ -16,6 +16,9 @@ app can change either. When a window becomes (or stops being) maximized, the dae
 attaches to its app and queues -[NSWindow _setCornerRadius:] plus drawsDecorationView on the
 titlebar container on the app's main run loop. The app is paused for ~1 s per batch (~3 s on
 the first attach, while lldb parses the shared cache). Non-AppKit windows keep their corners.
+That only happens while the app's main thread waits in its run loop; a busy app (for example
+one still starting up) can be paused holding its allocator lock, so nothing runs in it and its
+windows are retried later.
 
 Requirements: SIP disabled (task_for_pid on Dock and apps), Xcode (its LLDB Python module).
 Usage: noborder.py [--pids PID,PID...]   (--pids: only manage these apps' windows; for testing)
@@ -35,6 +38,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WINSCAN = os.path.join(HERE, "winscan")
 NOSHADOW_TAG = 1 << 3
 CORNER_RADIUS = 0.01    # AppKit treats 0 as "use the default radius"; sub-pixel draws square
+IDLE_TRAPS = {"mach_msg2_trap", "mach_msg_trap"}
+SHUTDOWN_RETRY_S = 5.0  # how long the restore on exit keeps retrying busy apps
 lldb = None             # LLDB Python module, loaded by load_lldb()
 
 
@@ -145,6 +150,14 @@ def window_expr(wids, apply):
     )
 
 
+def main_thread_idle(thread):
+    """True when the main thread waits for a message in its run loop. It then holds no app locks,
+    so the expression can allocate. Paused anywhere else, it may hold one (such as Chromium's
+    PartitionAlloc lock), and allocating would re-enter it and abort the app."""
+    names = [thread.GetFrameAtIndex(i).GetFunctionName() for i in range(min(thread.GetNumFrames(), 10))]
+    return bool(names) and names[0] in IDLE_TRAPS and "__CFRunLoopServiceMachPort" in names
+
+
 class Apps:
     """Short attaches to app processes. Reusing one debugger keeps lldb's parsed copy of the
     shared cache, which cuts each attach from ~3 s to under 1 s."""
@@ -160,15 +173,18 @@ class Apps:
         return self._run(pid, wids, apply=False)
 
     def _run(self, pid, wids, apply):
+        """Returns "ok", "busy" (main thread not idle; nothing ran) or "failed"."""
         target = self.debugger.CreateTarget("")
         err = lldb.SBError()
         process = target.AttachToProcessWithID(self.debugger.GetListener(), pid, err)
         if err.Fail() or not process.IsValid():
             log(f"attach to pid {pid} failed: {err}")
             self.debugger.DeleteTarget(target)
-            return False
+            return "failed"
         try:
             thread = process.GetThreadAtIndex(0)  # main thread; AppKit must be called there
+            if not main_thread_idle(thread):
+                return "busy"
             process.SetSelectedThread(thread)
             opts = lldb.SBExpressionOptions()
             opts.SetLanguage(lldb.eLanguageTypeC)
@@ -187,7 +203,7 @@ class Apps:
             log(f"pid {pid}: not an AppKit app; corners left as is")
         elif n != len(wids):
             log(f"pid {pid}: {verb} {n} of {len(wids)} window(s)")
-        return ok and n == len(wids)
+        return "ok" if ok and n == len(wids) else "failed"
 
 
 class Dock:
@@ -276,6 +292,8 @@ class Dock:
 
 
 def run(acts, dock, apps):
+    """Execute acts. Returns [(pid, wids, restoring)] for the apps that were busy."""
+    busy = []
     if acts.untag and dock.process:
         log(f"untagging {' '.join(map(str, acts.untag))}")
         dock.untag(acts.untag)
@@ -283,15 +301,18 @@ def run(acts, dock, apps):
         log(f"Dock not attached; could not untag {' '.join(map(str, acts.untag))}")
     for pid, wids in acts.restore.items():
         log(f"restoring pid {pid}: {' '.join(map(str, wids))}")
-        apps.restore(pid, wids)
+        if apps.restore(pid, wids) == "busy":
+            busy.append((pid, wids, True))
     for pid, wids in acts.apply.items():
         log(f"squaring pid {pid}: {' '.join(map(str, wids))}")
-        apps.apply(pid, wids)
+        if apps.apply(pid, wids) == "busy":
+            busy.append((pid, wids, False))
     if acts.tag and dock.process:
         log(f"tagging {' '.join(map(str, acts.tag))}")
         dock.tag(acts.tag)
     elif acts.tag:
         log(f"Dock not attached; could not tag {' '.join(map(str, acts.tag))}")
+    return busy
 
 
 def main():
@@ -361,7 +382,9 @@ def main():
                     if only is not None:
                         windows = [w for w in windows if w.pid in only]
                     skip = {os.getpid(), parent, dock.process.GetProcessID()}
-                    run(tracker.update(windows, time.time(), skip), dock, apps)
+                    for pid, wids, restoring in run(tracker.update(windows, time.time(), skip), dock, apps):
+                        delay = tracker.hold(pid, wids, time.time(), restoring)
+                        log(f"pid {pid} busy; retrying in {delay:g} s")
                     count = sum(1 for w in windows if w.wid in tracker.applied)
                     if count != reported:
                         reported = count
@@ -373,9 +396,16 @@ def main():
         acts = tracker.restore_all()
         acts.restore = {pid: wids for pid, wids in acts.restore.items() if pid_alive(pid)}
         if not acts.empty():
+            deadline = time.time() + SHUTDOWN_RETRY_S
             if dock.process is None:
                 dock.attach()
-            run(acts, dock, apps)
+            busy = run(acts, dock, apps)
+            while busy and time.time() < deadline:
+                time.sleep(0.25)
+                busy = [(pid, wids, r) for pid, wids, r in busy
+                        if pid_alive(pid) and apps.restore(pid, wids) == "busy"]
+            for pid, _, _ in busy:
+                log(f"pid {pid} still busy; windows left changed")
         if dock.process is not None:
             dock.detach()
         log("exiting")

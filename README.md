@@ -31,6 +31,8 @@ Costs and limits:
 
 - An app freezes for ~1 s each time one of its windows becomes or stops being maximized (~3 s
   for the first app after the daemon starts, while lldb parses the shared cache).
+- A starting or busy app's windows are squared once the app is idle. The daemon checks first
+  and runs nothing inside a busy app.
 - Only AppKit windows (including Chromium and Electron apps) change corners. Others keep them.
 - Uses private AppKit and SkyLight APIs. If a macOS update removes the AppKit methods, the
   daemon skips that step instead of crashing the app.
@@ -69,6 +71,7 @@ Development:
 ```sh
 make test                          # Python and Swift unit tests
 make testtools && tests/e2e.sh     # end-to-end check against a test app (stop NoBorder first)
+make testtools && tests/idle.sh    # busy-app check against a test app (NoBorder may run)
 ./noborder.py --pids 123           # run the daemon in a terminal, only for pid 123's windows
 ```
 

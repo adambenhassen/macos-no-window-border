@@ -142,6 +142,82 @@ class RestoreTest(unittest.TestCase):
         self.assertTrue(t.restore_all().empty())
 
 
+def next_apply(tracker, start):
+    """Scan the maximized window every 0.25 s from start until an apply comes out; return when."""
+    now = start
+    while not tracker.update([win()], now).apply:
+        now += 0.25
+    return now
+
+
+class BusyTest(unittest.TestCase):
+    def test_busy_apply_is_not_applied_and_waits_out_the_hold(self):
+        t = Tracker()
+        settle(t, [win()])                                    # apply emitted at 0.5
+        self.assertEqual(t.hold(PID, [1], 0.5, restoring=False), 1)
+        self.assertEqual(t.applied, {})
+        for now in (0.75, 1.0, 1.25):                         # held until 1.5: no tag, no apply
+            self.assertTrue(t.update([win()], now).empty())
+        self.assertTrue(t.update([win()], 1.5).empty())       # hold over: settle again
+        self.assertEqual(t.update([win()], 2.0).apply, {PID: [1]})
+
+    def test_held_window_gets_no_actions_even_when_it_changes(self):
+        t = Tracker()
+        settle(t, [win()])
+        t.hold(PID, [1], 0.5, restoring=False)
+        for now in (0.75, 1.0, 1.25):
+            self.assertTrue(t.update([win(maximized=False)], now).empty())
+
+    def test_backoff_doubles_caps_and_resets_after_success(self):
+        t = Tracker()
+        now = next_apply(t, 0.0)
+        delays = []
+        for _ in range(7):
+            delays.append(t.hold(PID, [1], now, restoring=False))
+            later = next_apply(t, now + 0.25)
+            self.assertEqual(later, now + delays[-1] + 0.5)  # hold, then the 0.5 s settle
+            now = later
+        self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30])
+        t.update([win()], now + 0.25)                        # not busy: applied and seen
+        acts = settle(t, [win(maximized=False)], now + 0.5)
+        self.assertEqual(acts.restore, {PID: [1]})
+        self.assertEqual(t.hold(PID, [1], now + 1.0, restoring=True), 1)
+
+    def test_busy_restore_stays_applied_and_retries(self):
+        t = Tracker()
+        settle(t, [win()])
+        acts = settle(t, [win(maximized=False)], 1.0)
+        self.assertEqual((acts.restore, acts.untag), ({PID: [1]}, [1]))
+        self.assertEqual(t.hold(PID, [1], 1.5, restoring=True), 1)
+        self.assertEqual(t.applied, {1: PID})
+        for now in (1.75, 2.0, 2.25):
+            self.assertTrue(t.update([win(maximized=False)], now).empty())
+        self.assertTrue(t.update([win(maximized=False)], 2.5).empty())
+        acts = t.update([win(maximized=False)], 3.0)
+        self.assertEqual(acts.restore, {PID: [1]})
+        self.assertEqual(acts.untag, [])                     # cleared on the first try already
+        self.assertEqual(t.applied, {})
+
+    def test_remaximized_during_busy_restore_is_tagged_and_later_untagged(self):
+        t = Tracker()
+        settle(t, [win()])
+        settle(t, [win(maximized=False)], 1.0)
+        t.hold(PID, [1], 1.5, restoring=True)
+        self.assertEqual(t.update([win()], 2.5).tag, [1])    # still applied; shadow is back
+        acts = settle(t, [win(maximized=False)], 3.0)
+        self.assertEqual((acts.restore, acts.untag), ({PID: [1]}, [1]))
+
+    def test_restore_all_includes_windows_held_for_restore_only(self):
+        t = Tracker()
+        settle(t, [win(1), win(2)])
+        settle(t, [win(1, maximized=False), win(2), win(3)], 1.0)  # restore 1, apply 3
+        t.hold(PID, [1], 1.5, restoring=True)
+        t.hold(PID, [3], 1.5, restoring=False)               # never applied: nothing to undo
+        acts = t.restore_all()
+        self.assertEqual(sorted(acts.restore[PID]), [1, 2])
+        self.assertEqual(acts.untag, [2])                    # 1 was untagged by the busy restore
+
+
 class ActionsTest(unittest.TestCase):
     def test_empty(self):
         self.assertTrue(Actions().empty())
