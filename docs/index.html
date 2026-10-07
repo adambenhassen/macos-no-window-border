@@ -6,6 +6,7 @@
 <title>NoBorder</title>
 <meta name="description" content="The look of fullscreen without fullscreen mode: maximized macOS windows go edge to edge, with no outline, rounded corners or titlebar rim.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.png">
 </head>
 <body>
 
@@ -135,8 +136,31 @@
         <figcaption>With NoBorder</figcaption>
       </figure>
     </div>
+    <button class="button compare-open" type="button" hidden>Compare with a slider</button>
   </div>
 </header>
+
+<!-- Before/after slider, opened from the comparison above (needs JavaScript). -->
+<dialog id="slider" aria-label="Compare with and without NoBorder">
+  <button class="close" type="button" aria-label="Close">×</button>
+  <div class="slider-stage">
+    <svg viewBox="0 0 640 400" aria-hidden="true">
+      <clipPath id="reveal-without"><rect id="reveal-rect" x="0" y="0" width="320" height="400"/></clipPath>
+      <use href="#macbook"/>
+      <svg x="50" y="32" width="540" height="328.6" viewBox="0 0 540 328" preserveAspectRatio="none"><use href="#win-after"/></svg>
+      <g clip-path="url(#reveal-without)">
+        <svg x="50" y="32" width="540" height="328.6" viewBox="0 0 540 328" preserveAspectRatio="none"><use href="#win-before"/></svg>
+      </g>
+      <g id="divider">
+        <line x1="320" y1="18" x2="320" y2="360" stroke="#fff" stroke-width="2"/>
+        <circle cx="320" cy="189" r="13" fill="#fff"/>
+        <path d="M315 189 l-5 0 m5 -5 l-5 5 l5 5 M325 189 l5 0 m-5 -5 l5 5 l-5 5" stroke="#333" stroke-width="2" fill="none"/>
+      </g>
+    </svg>
+    <input type="range" min="0" max="100" value="50" step="1" aria-label="Slide between without and with NoBorder">
+  </div>
+  <div class="slider-labels"><span>← Without</span><span>With NoBorder →</span></div>
+</dialog>
 
 <main class="wrap">
   <section>
@@ -233,6 +257,42 @@ open /Applications/NoBorder.app</code></pre>
   document.body.classList.add("js");
   for (const b of buttons) b.addEventListener("click", () => select(b));
   select(buttons[0]);
+
+  // Before/after slider: the "without" window is clipped to the left of the handle.
+  const dialog = document.getElementById("slider");
+  const range = dialog.querySelector("input[type=range]");
+  const reveal = document.getElementById("reveal-rect");
+  const divider = document.getElementById("divider");
+  const compare = document.querySelector(".compare");
+  const openButton = document.querySelector(".compare-open");
+  function slide() {
+    const x = 50 + 540 * range.value / 100;  // screen spans x 50..590 in the MacBook drawing
+    reveal.setAttribute("width", x);
+    divider.setAttribute("transform", `translate(${x - 320} 0)`);
+  }
+  function open() {
+    range.value = 50;
+    slide();
+    dialog.showModal();
+    range.focus();
+  }
+  range.addEventListener("input", slide);
+  // Dragging maps the pointer to the screen area itself; the range input handles the keyboard.
+  const stage = dialog.querySelector(".slider-stage");
+  function drag(e) {
+    const r = stage.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * 640;  // in MacBook drawing units
+    range.value = Math.min(100, Math.max(0, (x - 50) / 540 * 100));
+    slide();
+  }
+  stage.addEventListener("pointerdown", e => { e.preventDefault(); stage.setPointerCapture(e.pointerId); drag(e); range.focus(); });
+  stage.addEventListener("pointermove", e => { if (stage.hasPointerCapture(e.pointerId)) drag(e); });
+  compare.addEventListener("click", open);
+  compare.classList.add("clickable");
+  openButton.hidden = false;
+  openButton.addEventListener("click", open);
+  dialog.querySelector(".close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
 </script>
 </body>
 </html>
