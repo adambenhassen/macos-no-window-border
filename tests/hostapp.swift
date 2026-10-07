@@ -3,6 +3,7 @@
 // SIGUSR1 shrinks "max" to 600x400; SIGUSR2 makes it fill the usable area again.
 // With the "busy" argument (tests/idle.sh), the main thread keeps running ~50 ms blocks and
 // almost never waits in its run loop; SIGHUP stops that, so the app becomes idle.
+// With the "small" argument, "max" starts at the 600x400 size, so it is never maximized.
 import AppKit
 
 let app = NSApplication.shared
@@ -21,11 +22,11 @@ func makeWindow(_ name: String, _ frame: NSRect) -> NSWindow {
     return w
 }
 
-let maxWindow = makeWindow("max", usable)
+let small = NSRect(x: usable.minX + 200, y: usable.minY + 150, width: 600, height: 400)
+let maxWindow = makeWindow("max", CommandLine.arguments.contains("small") ? small : usable)
 let floating = makeWindow("floating", NSRect(x: usable.minX + 100, y: usable.minY + 100, width: 400, height: 300))
 fflush(stdout)
 
-let small = NSRect(x: usable.minX + 200, y: usable.minY + 150, width: 600, height: 400)
 var sources: [DispatchSourceSignal] = []
 for (sig, frame) in [(SIGUSR1, small), (SIGUSR2, usable)] {
     signal(sig, SIG_IGN)

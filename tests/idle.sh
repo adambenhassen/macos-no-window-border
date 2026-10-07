@@ -1,8 +1,7 @@
 #!/bin/zsh
 # Regression check: noborder only runs its AppKit expression in an app whose main thread is idle.
 # Attaches only to a tests/hostapp it starts, never to Dock, so it can run next to NoBorder.app.
-# It works on the floating window and un-maximizes "max" at once, so a running NoBorder leaves
-# the test app alone.
+# The test app has no maximized window ("small"), so a running NoBorder leaves it alone.
 set -u
 typeset -F SECONDS  # fractional, so the poll timeout is exact
 cd "${0:A:h}/.."
@@ -36,11 +35,10 @@ expect() {  # expect <label> <got> <want>
     fi
 }
 
-tests/hostapp busy > $out/host.txt & host=$!
+tests/hostapp busy small > $out/host.txt & host=$!
 for _ in {1..40}; do win=$(awk '$1=="floating" {print $2}' $out/host.txt); [[ -n $win ]] && break; sleep 0.05; done
 [[ -n $win ]] || { echo "FAIL hostapp printed no window"; exit 1 }
-kill -USR1 $host  # before NoBorder's 0.5 s settle
-sleep 1.5
+sleep 1.5  # busy from 0.5 s after launch
 
 expect "busy app: apply skipped" "$(apply $host $win)" "busy"
 sleep 1
