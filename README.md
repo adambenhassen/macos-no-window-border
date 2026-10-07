@@ -3,7 +3,7 @@
 NoBorder makes maximized windows edge to edge on macOS: no 1px gray outline (and drop shadow),
 square corners, and no light rim along the titlebar edge. Windows that don't fill their
 screen's usable area keep the normal macOS look, and a window that stops being maximized gets
-back exactly what NoBorder changed.
+back exactly what NoBorder changed (unless its app stays busy; see Costs and limits).
 
 Website: https://adambenhassen.github.io/macos-no-window-border/
 

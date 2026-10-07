@@ -44,7 +44,18 @@ NOSHADOW_TAG = 1 << 3
 CORNER_RADIUS = 0.01    # AppKit treats 0 as "use the default radius"; sub-pixel draws square
 IDLE_TRAPS = {"mach_msg2_trap", "mach_msg_trap"}
 SHUTDOWN_RETRY_S = 5.0  # how long the restore on exit keeps retrying busy apps
-GRACE_S = float(os.environ.get("NOBORDER_GRACE_S", 30))  # never attach to an app this new
+
+
+def grace_seconds():
+    raw = os.environ.get("NOBORDER_GRACE_S", "30")
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"ignoring NOBORDER_GRACE_S={raw!r}: not a number; using 30", file=sys.stderr, flush=True)
+        return 30.0
+
+
+GRACE_S = grace_seconds()  # never attach to an app this new
 lldb = None             # LLDB Python module, loaded by load_lldb()
 libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
 
