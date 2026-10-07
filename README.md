@@ -5,6 +5,8 @@ square corners, and no light rim along the titlebar edge. Windows that don't fil
 screen's usable area keep the normal macOS look, and a window that stops being maximized gets
 back exactly what NoBorder changed.
 
+Website: https://adambenhassen.github.io/macos-no-window-border/
+
 ## How it works
 
 - **Outline and shadow:** WindowServer draws the outline as part of the window shadow. Both

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NoBorder</title>
+<meta name="description" content="The look of fullscreen without fullscreen mode: maximized macOS windows go edge to edge, with no outline, rounded corners or titlebar rim.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Shared drawings: the "without" and "with" MacBooks differ only in the window symbol. -->
+<svg class="defs" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b5bdb"/>
+      <stop offset="0.55" stop-color="#7048e8"/>
+      <stop offset="1" stop-color="#e64980"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="win-round"><rect width="540" height="328" rx="11"/></clipPath>
+
+    <symbol id="macbook" viewBox="0 0 640 400">
+      <rect x="40" y="8" width="560" height="362" rx="18" fill="#1c1c1e" stroke="#4a4a50" stroke-width="1.5"/>
+      <path d="M58 18 H582 Q590 18 590 26 V360 H50 V26 Q50 18 58 18 Z" fill="url(#wall)"/>
+      <rect x="50" y="18" width="540" height="14" fill="#000" opacity="0.35"/>
+      <rect x="62" y="23" width="22" height="4" rx="2" fill="#fff" opacity="0.85"/>
+      <rect x="92" y="23" width="16" height="4" rx="2" fill="#fff" opacity="0.6"/>
+      <rect x="114" y="23" width="16" height="4" rx="2" fill="#fff" opacity="0.6"/>
+      <rect x="540" y="23" width="38" height="4" rx="2" fill="#fff" opacity="0.6"/>
+      <rect x="290" y="18" width="60" height="12" rx="5" fill="#1c1c1e"/>
+      <path d="M8 370 H632 L622 386 Q620 390 614 390 H26 Q20 390 18 386 Z" fill="#c9c9cf"/>
+      <rect x="272" y="370" width="96" height="6" rx="3" fill="#a9a9b0"/>
+    </symbol>
+
+    <symbol id="win-content" viewBox="0 0 540 328">
+      <rect width="540" height="328" fill="#0d0d0d"/>
+      <rect width="540" height="24" fill="#2b2c2e"/>
+      <circle cx="14" cy="12" r="4.5" fill="#ff5f57"/>
+      <circle cx="28" cy="12" r="4.5" fill="#febc2e"/>
+      <circle cx="42" cy="12" r="4.5" fill="#28c840"/>
+      <rect x="16" y="40" width="150" height="6" fill="#4a4a4a"/>
+      <rect x="16" y="56" width="220" height="6" fill="#4a4a4a"/>
+      <rect x="16" y="72" width="110" height="6" fill="#3fb950"/>
+      <rect x="16" y="88" width="180" height="6" fill="#4a4a4a"/>
+    </symbol>
+
+    <!-- Default macOS look: rounded corners, shadow, 1px outline, light rim on the titlebar. -->
+    <symbol id="win-before" viewBox="0 0 540 328">
+      <rect width="540" height="328" rx="11" fill="#0d0d0d" filter="url(#shadow)"/>
+      <g clip-path="url(#win-round)">
+        <use href="#win-content"/>
+        <rect width="540" height="1.5" fill="#6a6b6e"/>
+      </g>
+      <rect x="0.5" y="0.5" width="539" height="327" rx="10.5" fill="none" stroke="#a0a0a6" stroke-width="1.2"/>
+    </symbol>
+
+    <symbol id="win-after" viewBox="0 0 540 328">
+      <use href="#win-content"/>
+    </symbol>
+
+    <!-- 8x top-left corner of each window. -->
+    <symbol id="zoom-before" viewBox="0 0 160 100">
+      <rect width="160" height="100" fill="url(#wall)"/>
+      <rect x="22" y="22" width="200" height="140" rx="28" fill="#0d0d0d" filter="url(#shadow)"/>
+      <clipPath id="zoom-round"><rect x="22" y="22" width="200" height="140" rx="28"/></clipPath>
+      <g clip-path="url(#zoom-round)">
+        <rect x="22" y="22" width="200" height="46" fill="#2b2c2e"/>
+        <rect x="22" y="22" width="200" height="4" fill="#6a6b6e"/>
+        <circle cx="54" cy="45" r="9" fill="#ff5f57"/>
+      </g>
+      <rect x="23" y="23" width="198" height="138" rx="27" fill="none" stroke="#9a9aa0" stroke-width="2"/>
+    </symbol>
+    <symbol id="zoom-after" viewBox="0 0 160 100">
+      <rect width="160" height="100" fill="url(#wall)"/>
+      <rect x="22" y="22" width="200" height="140" fill="#0d0d0d"/>
+      <rect x="22" y="22" width="200" height="46" fill="#2b2c2e"/>
+      <circle cx="54" cy="45" r="9" fill="#ff5f57"/>
+    </symbol>
+
+    <!-- Close-ups for the "What it changes" cards: a window's left edge, and its titlebar's top edge. -->
+    <symbol id="edge-before" viewBox="0 0 120 70">
+      <rect width="120" height="70" fill="url(#wall)"/>
+      <rect x="40" y="-10" width="100" height="90" fill="#0d0d0d" filter="url(#shadow)"/>
+      <rect x="40" y="-10" width="2" height="90" fill="#a0a0a6"/>
+    </symbol>
+    <symbol id="edge-after" viewBox="0 0 120 70">
+      <rect width="120" height="70" fill="url(#wall)"/>
+      <rect x="40" y="-10" width="100" height="90" fill="#0d0d0d"/>
+    </symbol>
+    <symbol id="rim-before" viewBox="0 0 120 70">
+      <rect width="120" height="70" fill="url(#wall)"/>
+      <rect y="24" width="120" height="46" fill="#2b2c2e"/>
+      <rect y="24" width="120" height="3" fill="#6e6f73"/>
+      <rect y="58" width="120" height="12" fill="#0d0d0d"/>
+      <rect y="57" width="120" height="1.5" fill="#1a1a1a"/>
+    </symbol>
+    <symbol id="rim-after" viewBox="0 0 120 70">
+      <rect width="120" height="70" fill="url(#wall)"/>
+      <rect y="24" width="120" height="46" fill="#2b2c2e"/>
+      <rect y="58" width="120" height="12" fill="#0d0d0d"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="hero">
+  <div class="wrap">
+    <h1><img src="icon.png" alt="" width="56" height="56"> NoBorder</h1>
+    <p class="lead">The look of fullscreen, without fullscreen mode.</p>
+    <p class="tagline">Maximized windows go edge to edge: no outline, no rounded corners, no titlebar rim. The menu bar and Dock stay put, the window stays on your current Space, and nothing slides away.</p>
+    <div class="buttons">
+      <a class="button primary" href="https://github.com/adambenhassen/macos-no-window-border/releases/latest/download/NoBorder.zip">Download</a>
+      <a class="button" href="https://github.com/adambenhassen/macos-no-window-border">View on GitHub</a>
+    </div>
+
+    <div class="compare">
+      <figure>
+        <svg viewBox="0 0 640 400" role="img" aria-labelledby="t-without">
+          <title id="t-without">MacBook with a maximized window: rounded corners, outline and shadow</title>
+          <use href="#macbook"/>
+          <svg x="50" y="32" width="540" height="328.6" viewBox="0 0 540 328" preserveAspectRatio="none"><use href="#win-before"/></svg>
+        </svg>
+        <svg class="zoom" viewBox="0 0 160 100" role="img" aria-label="Zoomed corner: rounded, with outline"><use href="#zoom-before"/></svg>
+        <figcaption>Without</figcaption>
+      </figure>
+      <figure>
+        <svg viewBox="0 0 640 400" role="img" aria-labelledby="t-with">
+          <title id="t-with">MacBook with a maximized window filling the screen edge to edge</title>
+          <use href="#macbook"/>
+          <svg x="50" y="32" width="540" height="328.6" viewBox="0 0 540 328" preserveAspectRatio="none"><use href="#win-after"/></svg>
+        </svg>
+        <svg class="zoom" viewBox="0 0 160 100" role="img" aria-label="Zoomed corner: square, no outline"><use href="#zoom-after"/></svg>
+        <figcaption>With NoBorder</figcaption>
+      </figure>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>What it changes</h2>
+    <div class="grid">
+      <div class="item">
+        <div class="mini" role="img" aria-label="Window edge before and after: the gray outline and shadow are gone"><svg viewBox="0 0 120 70"><use href="#edge-before"/></svg><span aria-hidden="true">→</span><svg viewBox="0 0 120 70"><use href="#edge-after"/></svg></div>
+        <h3>Outline and shadow</h3>
+        <p>The 1px gray line WindowServer draws around every window, and the drop shadow it belongs to.</p>
+      </div>
+      <div class="item">
+        <div class="mini" role="img" aria-label="Window corner before and after: rounded becomes square"><svg viewBox="0 0 160 100"><use href="#zoom-before"/></svg><span aria-hidden="true">→</span><svg viewBox="0 0 160 100"><use href="#zoom-after"/></svg></div>
+        <h3>Rounded corners</h3>
+        <p>Corners go square, so a maximized window meets the screen edge with no wallpaper showing through.</p>
+      </div>
+      <div class="item">
+        <div class="mini" role="img" aria-label="Titlebar top edge before and after: the light rim is gone"><svg viewBox="0 0 120 70"><use href="#rim-before"/></svg><span aria-hidden="true">→</span><svg viewBox="0 0 120 70"><use href="#rim-after"/></svg></div>
+        <h3>Titlebar rim</h3>
+        <p>The light highlight along the titlebar's top edge (and the line under the titlebar).</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Only maximized windows</h2>
+    <p>A window counts as maximized when it fills its screen's usable area: below the menu bar, beside the Dock. Every other window keeps the normal macOS look. A window gets its normal look back when you un-maximize it, turn NoBorder off, or quit it.</p>
+  </section>
+
+  <section>
+    <h2>Requirements</h2>
+    <ul>
+      <li><strong>System Integrity Protection disabled.</strong> NoBorder attaches a debugger to Dock and to your apps, which SIP forbids. Disabling SIP weakens macOS security; read <a href="https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection">Apple's guide</a> before you do it.</li>
+      <li><strong>Xcode installed.</strong> NoBorder uses the LLDB that ships with it.</li>
+      <li><strong>macOS 14 or later.</strong> Tested on macOS 15.</li>
+    </ul>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <div class="tabs" role="tablist" hidden>
+      <button role="tab" id="tab-download" aria-controls="panel-download" aria-selected="true">Download</button>
+      <button role="tab" id="tab-source" aria-controls="panel-source" aria-selected="false">Build from source</button>
+    </div>
+    <div class="panel" id="panel-download" role="tabpanel" aria-labelledby="tab-download">
+      <h3 class="panel-title">Download</h3>
+      <ol>
+        <li>Download <a href="https://github.com/adambenhassen/macos-no-window-border/releases/latest/download/NoBorder.zip">NoBorder.zip</a> and unzip it.</li>
+        <li>Move <code>NoBorder.app</code> to Applications and open it.</li>
+        <li>It isn't notarized, so macOS blocks the first launch. Open System Settings › Privacy &amp; Security and click <em>Open Anyway</em>.</li>
+      </ol>
+    </div>
+    <div class="panel" id="panel-source" role="tabpanel" aria-labelledby="tab-source">
+      <h3 class="panel-title">Build from source</h3>
+<pre><code>git clone https://github.com/adambenhassen/macos-no-window-border
+cd macos-no-window-border
+make install
+open /Applications/NoBorder.app</code></pre>
+    </div>
+    <p>The menu bar icon shows the status and has <em>Enabled</em>, <em>Launch at Login</em> and <em>Quit</em>.</p>
+  </section>
+
+  <section>
+    <h2>Costs and limits</h2>
+    <ul>
+      <li>An app freezes for about a second each time one of its windows becomes or stops being maximized.</li>
+      <li>Only AppKit windows change corners. That includes Chromium and Electron apps.</li>
+      <li>NoBorder uses private macOS APIs, so a macOS update can break it.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <p>A small daemon keeps an LLDB session attached to Dock and calls WindowServer from inside it to set each maximized window's no-shadow tag, which removes the outline. For corners and the rim, it briefly attaches to the window's app and queues two AppKit calls on the app's main run loop. Details are in the <a href="https://github.com/adambenhassen/macos-no-window-border#readme">README</a>.</p>
+  </section>
+</main>
+
+<footer class="wrap">
+  <a href="https://github.com/adambenhassen/macos-no-window-border">github.com/adambenhassen/macos-no-window-border</a>
+</footer>
+
+<script>
+  // Tabs for the install section; without JavaScript both panels stay visible.
+  const tabs = document.querySelector(".tabs");
+  const buttons = tabs.querySelectorAll("[role=tab]");
+  function select(button) {
+    for (const b of buttons) {
+      const on = b === button;
+      b.setAttribute("aria-selected", on);
+      document.getElementById(b.getAttribute("aria-controls")).hidden = !on;
+    }
+  }
+  tabs.hidden = false;
+  document.body.classList.add("js");
+  for (const b of buttons) b.addEventListener("click", () => select(b));
+  select(buttons[0]);
+</script>
+</body>
+</html>
