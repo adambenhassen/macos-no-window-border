@@ -2,8 +2,8 @@
 //
 //   winscan          print windows that still have a shadow:  <wid>\t<pid>\t<owner>\t<title>
 //   winscan --all    print every normal window, with a trailing [shadow] / [noshadow] column
-//   winscan --watch  every 250 ms print one line with the space-separated wids that still
-//                    have a shadow (empty line when none). Used by noborder.py.
+//   winscan --watch  every 250 ms print one line with a space-separated <wid>:<pid>:<shadow>
+//                    token per normal window (empty line when none). Used by noborder.py.
 //
 // Shadow state is WindowServer tag bit 3 (what NSWindow.hasShadow toggles). Reading tags of
 // foreign windows works from any process; setting them does not, hence noborder.py.
@@ -39,12 +39,12 @@ static int scan(int cid, int mode) {  // mode: 0 = shadowed, 1 = all, 2 = watch 
         uint64_t tags[2] = {0, 0};
         if (SLSGetWindowTags(cid, wid, tags, 64) != 0) continue;
         int noshadow = (tags[0] >> NOSHADOW_BIT) & 1;
-        if (noshadow && mode != 1) continue;
         if (mode == 2) {
-            printf(first ? "%u" : " %u", wid);
+            printf(first ? "%u:%d:%d" : " %u:%d:%d", wid, pid, !noshadow);
             first = 0;
             continue;
         }
+        if (noshadow && mode != 1) continue;
         char owner[256], title[512];
         cstr(CFDictionaryGetValue(w, kCGWindowOwnerName), owner, sizeof owner);
         cstr(CFDictionaryGetValue(w, kCGWindowName), title, sizeof title);
