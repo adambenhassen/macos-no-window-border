@@ -105,7 +105,7 @@
   }
   #slider .close:hover { background: rgb(255 255 255 / 0.24); }
   .slider-stage {
-    position: relative; margin-top: 40px; width: min(1400px, 92vw, calc((100vh - 170px) * 1.43));
+    position: relative; margin-top: 40px; width: min(1400px, 92vw, calc((100vh - 170px) * 1.5));
     cursor: ew-resize; touch-action: none; user-select: none;
   }
   .slider-stage svg { display: block; width: 100%; height: auto; }
@@ -119,8 +119,8 @@
     padding: 4px 12px; border-radius: 999px; background: rgb(0 0 0 / 0.6); color: #fff;
     font-size: clamp(11px, 1.3vw, 15px); font-weight: 600;
   }
-  .slider-label.left { left: 7.8%; }
-  .slider-label.right { right: 7.8%; }
+  .slider-label.left { left: 9.8%; }
+  .slider-label.right { right: 9.8%; }
   .slider-hint { margin: 0; color: rgb(255 255 255 / 0.6); font-size: 0.95rem; }
 
   main section { padding: 36px 0 4px; }
@@ -291,7 +291,7 @@
 <dialog id="slider" aria-label="Compare with and without NoBorder">
   <button class="close" type="button" aria-label="Close">×</button>
   <div class="slider-stage">
-    <svg viewBox="0 -24 640 448" aria-hidden="true">
+    <svg viewBox="-16 -24 672 448" aria-hidden="true">
       <clipPath id="reveal-without"><rect id="reveal-rect" x="0" y="-24" width="320" height="448"/></clipPath>
       <use href="#macbook" width="640" height="400"/>
       <svg x="50" y="32" width="540" height="328.6" viewBox="0 0 540 328" preserveAspectRatio="none"><use href="#win-after"/></svg>
@@ -415,7 +415,7 @@ open /Applications/NoBorder.app</code></pre>
   const compare = document.querySelector(".compare");
   const openButton = document.querySelector(".compare-open");
   function slide() {
-    const x = 50 + 540 * range.value / 100;  // screen spans x 50..590 in the MacBook drawing
+    const x = 640 * range.value / 100;  // the handle travels the whole MacBook width, past the screen edges
     reveal.setAttribute("width", x);
     divider.setAttribute("transform", `translate(${x - 320} 0)`);
   }
@@ -430,8 +430,8 @@ open /Applications/NoBorder.app</code></pre>
   const stage = dialog.querySelector(".slider-stage");
   function drag(e) {
     const r = stage.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width * 640;  // in MacBook drawing units
-    range.value = Math.min(100, Math.max(0, (x - 50) / 540 * 100));
+    const x = (e.clientX - r.left) / r.width * 672 - 16;  // in MacBook drawing units (viewBox starts at -16)
+    range.value = Math.min(100, Math.max(0, x / 640 * 100));
     slide();
   }
   stage.addEventListener("pointerdown", e => { e.preventDefault(); stage.setPointerCapture(e.pointerId); drag(e); range.focus(); });
